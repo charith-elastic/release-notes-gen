@@ -31,6 +31,7 @@ func TestLoad(t *testing.T) {
 		">feature":     "New features",
 		">enhancement": "Enhancements",
 		">bug":         "Bug fixes",
+		NoGroupKey:     noGroupDisplay,
 	}
 
 	require.Equal(t, len(wantGroupLabels), len(conf.GroupLabels), "Size of groupLabels do not match")
@@ -45,6 +46,7 @@ func TestLoad(t *testing.T) {
 		">feature",
 		">enhancement",
 		">bug",
+		NoGroupKey,
 	}
 
 	require.Equal(t, wantGroupOrder, conf.GroupOrder)
