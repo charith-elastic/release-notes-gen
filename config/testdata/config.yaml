@@ -1,0 +1,20 @@
+repository: elastic/cloud-on-k8s
+groups:
+  - label: ">breaking"
+    display: "Breaking changes"
+  - label: ">deprecation"
+    display: "Deprecations"
+  - label: ">feature"
+    display: "New features"
+  - label: ">enhancement"
+    display: "Enhancements"
+  - label: ">bug"
+    display: "Bug fixes"
+ignoreLabels:
+  - ">non-issue"
+  - ">refactoring"
+  - ">docs"
+  - ">test"
+  - ":ci"
+  - "backport"
+  - "exclude-from-release-notes"

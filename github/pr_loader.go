@@ -12,13 +12,14 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
-	"os"
 	"time"
 
+	"github.com/elastic/release-notes-gen/config"
 	"golang.org/x/oauth2"
 )
 
 const (
+	apiTimeout      = 30 * time.Second
 	graphqlEndpoint = "https://api.github.com/graphql"
 	contentType     = "application/json; charset=utf-8"
 	maxPayloadSize  = 1024 * 1024 * 10 // 10 MiB
@@ -51,6 +52,7 @@ query ($q: String!, $per_page: Int = 50, $after: String) {
 `
 )
 
+// PullRequest holds information about a pull request.
 type PullRequest struct {
 	Number int
 	Title  string
@@ -58,37 +60,34 @@ type PullRequest struct {
 	Issues []int
 }
 
-func LoadPullRequests(repoName, version string, ignoredLabels map[string]struct{}) ([]PullRequest, error) {
-	client := mkClient()
+// LoadPullRequests loads pull requests labelled with the FilterLabel.
+func LoadPullRequests(conf *config.Config) ([]PullRequest, error) {
+	client := mkClient(conf.GitHubToken)
 	loader := &prLoader{
 		apiEndpoint: graphqlEndpoint,
-		repoName:    repoName,
-		version:     version,
-		prp:         newPRProcessor(repoName, ignoredLabels),
+		repoName:    conf.Repository,
+		filterLabel: conf.FilterLabel,
+		prp:         newPRProcessor(conf.Repository, conf.IgnoreLabels),
 	}
 
 	return loader.loadPullRequests(client)
 }
 
-func mkClient() *http.Client {
+func mkClient(token string) *http.Client {
 	client := &http.Client{
-		Timeout: 15 * time.Second,
+		Timeout: apiTimeout,
 	}
 
-	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
-		tokenSource := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
-		ctx := context.WithValue(context.Background(), oauth2.HTTPClient, client)
+	tokenSource := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
+	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, client)
 
-		return oauth2.NewClient(ctx, tokenSource)
-	}
-
-	return client
+	return oauth2.NewClient(ctx, tokenSource)
 }
 
 type prLoader struct {
 	apiEndpoint string
 	repoName    string
-	version     string
+	filterLabel string
 	prp         *prProcessor
 }
 
@@ -174,7 +173,7 @@ type apiResponse struct {
 
 func (loader *prLoader) buildRequest(cursor *string) (*http.Request, error) {
 	variables := map[string]interface{}{
-		"q":     fmt.Sprintf("repo:%s is:pr is:closed label:v%s", loader.repoName, loader.version),
+		"q":     fmt.Sprintf("repo:%s is:pr is:closed label:%s", loader.repoName, loader.filterLabel),
 		"after": cursor,
 	}
 

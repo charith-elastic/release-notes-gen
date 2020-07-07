@@ -1,0 +1,30 @@
+project_name: release-notes-gen
+before:
+  hooks:
+    - go mod download
+release:
+  github:
+    owner: charith-elastic
+    name: release-notes-gen
+builds:
+  - id: default
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+    env:
+      - CGO_ENABLED=0
+      - GO111MODULE=on
+    ldflags:
+      - -s -w -X main.appVersion={{.Version}} -X main.appCommit={{.Commit}}
+archives:
+  - id: default
+    builds:
+      - default
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    wrap_in_directory: release-notes-gen
+    files:
+      - README.md
+      - example/*
+

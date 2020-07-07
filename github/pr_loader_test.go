@@ -73,7 +73,7 @@ func TestDoLoadPullRequests(t *testing.T) {
 	loader := &prLoader{
 		apiEndpoint: ts.URL,
 		repoName:    "elastic/cloud-on-k8s",
-		version:     "1.2.0",
+		filterLabel: "v1.2.0",
 		prp:         newPRProcessor("elastic/cloud-on-k8s", ignoredLabels),
 	}
 

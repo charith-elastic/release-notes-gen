@@ -6,134 +6,101 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
-	"strings"
-	"text/template"
 
-	"github.com/elastic/cloud-on-k8s/hack/release-notes/github"
-)
-
-const (
-	noGroup  = "nogroup"
-	repoName = "elastic/cloud-on-k8s"
-
-	releaseNotesTemplate = `:issue: https://github.com/{{.Repo}}/issues/
-:pull: https://github.com/{{.Repo}}/pull/
-
-[[release-notes-{{.Version}}]]
-== {n} version {{.Version}}
-{{range $group := .GroupOrder -}}
-{{with (index $.Groups $group)}}
-[[{{- id $group -}}-{{$.Version}}]]
-[float]
-=== {{index $.GroupLabels $group}}
-{{range .}}
-* {{.Title}} {pull}{{.Number}}[#{{.Number}}]{{with .Issues -}}
-{{$length := len .}} (issue{{if gt $length 1}}s{{end}}: {{range $idx, $el := .}}{{if $idx}}, {{end}}{issue}{{$el}}[#{{$el}}]{{end}})
-{{- end}}
-{{- end}}
-{{- end}}
-{{end}}
-`
+	"github.com/elastic/release-notes-gen/config"
+	"github.com/elastic/release-notes-gen/github"
+	"github.com/spf13/cobra"
 )
 
 var (
-	groupLabels = map[string]string{
-		">breaking":    "Breaking changes",
-		">deprecation": "Deprecations",
-		">feature":     "New features",
-		">enhancement": "Enhancements",
-		">bug":         "Bug fixes",
-		noGroup:        "Misc",
-	}
+	appCommit  = "unknown"
+	appVersion = "0.1.0"
 
-	groupOrder = []string{
-		">breaking",
-		">deprecation",
-		">feature",
-		">enhancement",
-		">bug",
-		noGroup,
-	}
-
-	ignoredLabels = map[string]struct{}{
-		">non-issue":                 {},
-		">refactoring":               {},
-		">docs":                      {},
-		">test":                      {},
-		":ci":                        {},
-		"backport":                   {},
-		"exclude-from-release-notes": {},
-	}
+	args = config.Args{}
 )
 
 func main() {
-	if len(os.Args) != 2 {
-		fmt.Printf("Usage: GH_TOKEN=<github token> %s VERSION\n", os.Args[0])
-		os.Exit(2)
+	cmd := &cobra.Command{
+		Use:           "release-notes-gen",
+		Short:         "Generate release notes from GitHub pull requests",
+		Example:       "GITHUB_TOKEN=xxxyyy ./release-notes-gen --conf=example/config.yaml --template=example/template.tpl --label=v1.2.0",
+		Version:       fmt.Sprintf("%s (%s)", appVersion, appCommit),
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE:          doRun,
 	}
 
-	version := os.Args[1]
+	cmd.Flags().StringVar(&args.ConfPath, "conf", "", "Path to the configuration file")
+	_ = cmd.MarkFlagRequired("conf")
 
-	prs, err := github.LoadPullRequests(repoName, version, ignoredLabels)
-	if err != nil {
-		log.Printf("ERROR: %v", err)
-		os.Exit(1)
-	}
+	cmd.Flags().StringVar(&args.FilterLabel, "label", "", "Label to filter PRs by (e.g. v1.2.0)")
+	_ = cmd.MarkFlagRequired("label")
 
-	if len(prs) == 0 {
-		log.Print("No pull requests found. Check the version argument.")
-		os.Exit(2)
-	}
+	cmd.Flags().StringVar(&args.TemplatePath, "template", "", "Path to the release notes template")
+	_ = cmd.MarkFlagRequired("template")
 
-	groupedPRs := groupPullRequests(prs)
-	if err := render(version, groupedPRs); err != nil {
-		log.Printf("Failed to render release notes: %v", err)
+	if err := cmd.Execute(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func groupPullRequests(prs []github.PullRequest) map[string][]github.PullRequest {
+func doRun(_ *cobra.Command, _ []string) error {
+	conf, err := config.Load(args, os.Getenv("GITHUB_TOKEN"))
+	if err != nil {
+		return err
+	}
+
+	prs, err := github.LoadPullRequests(conf)
+	if err != nil {
+		return err
+	}
+
+	if len(prs) == 0 {
+		return fmt.Errorf("no pull requests found matching label %s", conf.FilterLabel)
+	}
+
+	groupedPRs := groupPullRequests(conf, prs)
+	if err := render(conf, groupedPRs); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func groupPullRequests(conf *config.Config, prs []github.PullRequest) map[string][]github.PullRequest {
 	groups := make(map[string][]github.PullRequest)
 
 PR_LOOP:
 	for _, pr := range prs {
-		for _, lbl := range groupOrder {
+		for _, lbl := range conf.GroupOrder {
 			if _, ok := pr.Labels[lbl]; ok {
 				groups[lbl] = append(groups[lbl], pr)
 				continue PR_LOOP
 			}
 		}
 
-		groups[noGroup] = append(groups[noGroup], pr)
+		groups[config.NoGroupKey] = append(groups[config.NoGroupKey], pr)
 	}
 
 	return groups
 }
 
-func render(version string, groups map[string][]github.PullRequest) error {
+func render(conf *config.Config, groups map[string][]github.PullRequest) error {
 	params := struct {
-		Version     string
+		FilterLabel string
 		Repo        string
 		Groups      map[string][]github.PullRequest
 		GroupLabels map[string]string
 		GroupOrder  []string
 	}{
-		Version:     version,
-		Repo:        repoName,
+		FilterLabel: conf.FilterLabel,
+		Repo:        conf.Repository,
 		Groups:      groups,
-		GroupLabels: groupLabels,
-		GroupOrder:  groupOrder,
+		GroupLabels: conf.GroupLabels,
+		GroupOrder:  conf.GroupOrder,
 	}
 
-	funcs := template.FuncMap{
-		"id": func(s string) string {
-			return strings.TrimPrefix(s, ">")
-		},
-	}
-
-	tpl := template.Must(template.New("release_notes").Funcs(funcs).Parse(releaseNotesTemplate))
-
-	return tpl.Execute(os.Stdout, params)
+	return conf.Template.Execute(os.Stdout, params)
 }
